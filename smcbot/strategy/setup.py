@@ -281,10 +281,26 @@ class SignalEngine:
         m1_anchor = self._confirmation_swing(ctx, c, "M1")
         m5_anchor = self._confirmation_swing(ctx, c, "M5")
         stop_plan = build_stop(c.side, entry, m1_anchor, m5_anchor, atr1, atr5,
-                               self.cfg.risk, self.cfg.execution)
+                               self.cfg.risk, self.cfg.execution,
+                               sweep_extreme=c.sweep.extreme_price)
         if not stop_plan.valid:
             self.reject(f"stop:{stop_plan.reason or 'invalid'}")
             return None
+
+        # Cost gate (off by default).  A round trip costs roughly
+        # 2 * taker * notional, and notional is risk / stop_pct, so the fee
+        # measured in R is ~ 2*taker / stop_pct.  Refusing a setup whose cost
+        # eats too much of its own risk is a no-trade filter, not a stop that
+        # has been dragged into structure.
+        max_fee_r = self.cfg.filters.max_fee_r
+        if max_fee_r > 0:
+            stop_pct = stop_plan.distance / entry if entry else 0.0
+            fills = 1 + max(1, sum(1 for v in self.cfg.risk.partial_tp.values() if v > 0))
+            est_fee_r = (fills * self.cfg.execution.taker_fee / stop_pct
+                         if stop_pct > 0 else float("inf"))
+            if est_fee_r > max_fee_r:
+                self.reject("fee_r_too_high")
+                return None
 
         targets, rr, treason = select_targets(c.side, entry, stop_plan.price, atr5,
                                               ctx.liquidity, self.cfg.risk)

@@ -10,7 +10,7 @@ import math
 from typing import List
 
 from ..config import RiskConfig
-from ..core.types import Side, Target
+from ..core.types import LiquidityKind, LiquidityLevel, Side, Target
 from ..engine.liquidity import LiquidityEngine
 
 _TIER = {"M1": 1, "M5": 2, "M15": 3, "SESSION": 3, "DAILY": 4, "WEEKLY": 5}
@@ -59,6 +59,24 @@ def build_targets(side: Side, entry: float, stop: float, atr: float,
     return out[:max_targets]
 
 
+def atr_targets(side: Side, entry: float, stop: float, atr: float,
+                cfg: RiskConfig) -> List[Target]:
+    """Fixed ATR-multiple targets, for comparison against liquidity targets."""
+    risk = abs(entry - stop)
+    if risk <= 0 or atr <= 0:
+        return []
+    out: List[Target] = []
+    for mult in cfg.tp_atr_multiples:
+        distance = mult * atr
+        price = entry + distance * side.sign
+        level = LiquidityLevel(price, LiquidityKind.INTERNAL, side is Side.BUY,
+                               "ATR", 5.0, 0, 0, f"ATRx{mult}")
+        out.append(Target(price=price, liquidity=level,
+                          rr=round(distance / risk, 3), distance=distance,
+                          probability=_probability(mult, 5.0)))
+    return out
+
+
 def select_targets(side: Side, entry: float, stop: float, atr: float,
                    liq: LiquidityEngine, cfg: RiskConfig) -> tuple:
     """Return ``(targets, final_rr, reason)`` honouring the minimum-RR rule.
@@ -67,7 +85,9 @@ def select_targets(side: Side, entry: float, stop: float, atr: float,
     not the RR of the furthest target, so a 1.2R first target cannot be dressed
     up by a distant TP3 the trade will rarely reach.
     """
-    targets = build_targets(side, entry, stop, atr, liq, cfg)
+    targets = (atr_targets(side, entry, stop, atr, cfg)
+               if cfg.tp_mode == "ATR"
+               else build_targets(side, entry, stop, atr, liq, cfg))
     if not targets:
         return [], 0.0, "no_liquidity_target"
 

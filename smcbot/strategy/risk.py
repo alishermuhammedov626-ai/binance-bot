@@ -57,8 +57,14 @@ def round_tick(price: float, tick: float, direction: int = 0) -> float:
 
 def build_stop(side: Side, entry: float, m1_swing: Optional[float],
                m5_swing: Optional[float], atr_m1: float, atr_m5: float,
-               cfg: RiskConfig, execution: ExecutionConfig) -> StopPlan:
-    """Section 25 -- behind the confirmation swing, with an ATR/tick buffer."""
+               cfg: RiskConfig, execution: ExecutionConfig,
+               sweep_extreme: Optional[float] = None) -> StopPlan:
+    """Section 25 -- behind the confirmation swing, with an ATR/tick buffer.
+
+    ``cfg.stop_mode`` selects which structure the stop hides behind.  All three
+    modes place the stop *beyond* an invalidation level and never inside it
+    (section 78); they differ only in which level counts as invalidation.
+    """
     buffer_ = max(cfg.sl_atr_buffer * max(atr_m1, 1e-9),
                   cfg.sl_tick_buffer * execution.tick_size)
 
@@ -68,6 +74,15 @@ def build_stop(side: Side, entry: float, m1_swing: Optional[float],
         dist = abs(entry - price)
         return StopPlan(price, source, dist,
                         dist / atr_m1 if atr_m1 else 0.0, True)
+
+    mode = getattr(cfg, "stop_mode", "M1_SWING")
+    if mode == "M5_SWING" and m5_swing is not None:
+        anchor = m5_swing
+        plan = make(anchor, "M5_SWING")
+        return _finalise(plan, side, entry, cfg)
+    if mode == "SWEEP_EXTREME" and sweep_extreme is not None:
+        plan = make(sweep_extreme, "SWEEP_EXTREME")
+        return _finalise(plan, side, entry, cfg)
 
     plan: Optional[StopPlan] = None
     if m1_swing is not None:
@@ -86,7 +101,13 @@ def build_stop(side: Side, entry: float, m1_swing: Optional[float],
         anchor = entry - 1.5 * atr_m5 * side.sign
         plan = make(anchor, "ATR_FALLBACK")
 
-    # Sanity: the stop must be on the losing side of entry.
+    return _finalise(plan, side, entry, cfg)
+
+
+def _finalise(plan: StopPlan, side: Side, entry: float,
+              cfg: RiskConfig) -> StopPlan:
+    """Shared validity checks for every stop mode."""
+    # The stop must be on the losing side of entry.
     if (side is Side.BUY and plan.price >= entry) or \
        (side is Side.SELL and plan.price <= entry):
         return StopPlan(plan.price, plan.source, 0.0, 0.0, False, "stop_wrong_side")

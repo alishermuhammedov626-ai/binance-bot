@@ -140,6 +140,9 @@ class RiskConfig:
     min_rr: float = 1.5                    # section 29
     preferred_rr: float = 2.0
     strong_rr: float = 2.5
+    # Where the stop comes from.  M1_SWING is the shipped behaviour; the other
+    # two exist so the choice can be measured rather than assumed.
+    stop_mode: str = "M1_SWING"            # M1_SWING | M5_SWING | SWEEP_EXTREME
     sl_atr_buffer: float = 0.25            # section 25
     sl_tick_buffer: float = 2.0            # in ticks
     min_sl_atr: float = 0.35               # too-tight M1 stop => fall back to M5
@@ -154,6 +157,10 @@ class RiskConfig:
     cooldown_after_loss_minutes: int = 25
     max_trades_per_day: int = 5            # section 37
     soft_trades_per_day: int = 4
+    # LIQUIDITY is the shipped behaviour (section 27).  ATR places targets at
+    # fixed ATR multiples instead, so the two can be compared head to head.
+    tp_mode: str = "LIQUIDITY"             # LIQUIDITY | ATR
+    tp_atr_multiples: list = field(default_factory=lambda: [1.0, 2.0, 3.0])
     partial_tp: Dict[str, float] = field(
         default_factory=lambda: {"tp1": 0.30, "tp2": 0.30, "tp3": 0.40}   # section 30
     )
@@ -174,6 +181,9 @@ class FilterConfig:
     max_atr_pct: float = 0.020             # extreme volatility
     extreme_funding: float = 0.0008        # 0.08% per 8h
     max_chase_atr: float = 0.8             # section 77
+    # Reject a setup whose estimated round-trip commission exceeds this share
+    # of its own risk.  0 disables it, which is the shipped behaviour.
+    max_fee_r: float = 0.0
     news_filter: bool = False              # section 66 -- OFF unless a feed exists
     min_bars_ready: Dict[str, int] = field(
         default_factory=lambda: {"M15": 120, "M5": 240, "M1": 300}
