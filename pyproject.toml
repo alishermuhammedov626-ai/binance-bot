@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smcbot"
+version = "1.0.0"
+description = "Smart Money Concept futures bot with a look-ahead-free backtester"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+# Entirely optional: the built-in pure-Python gradient booster is used when
+# these are absent, and the model interface is identical either way.
+ml = ["lightgbm>=4.0", "scikit-learn>=1.3"]
+
+[project.scripts]
+smcbot = "smcbot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["smcbot*"]

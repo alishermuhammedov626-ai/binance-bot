@@ -1,0 +1,5 @@
+# The bot itself has no required dependencies -- pure Python 3.9+.
+# These are optional accelerators for the ML filter; if absent, the built-in
+# histogram gradient-boosted tree implementation is used instead.
+# lightgbm>=4.0
+# scikit-learn>=1.3
