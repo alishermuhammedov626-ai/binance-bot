@@ -27,6 +27,9 @@ def generate(n_minutes: int = 60 * 24 * 30, start: int = 1_704_067_200_000,
     range_lo = price * 0.996
     base_vol = 120.0
     start_price = price
+    # Round to the price's own scale: one decimal suits BTC and destroys a
+    # sub-cent memecoin, where it would collapse every candle onto 0.0.
+    digits = max(1, 9 - max(0, int(math.floor(math.log10(abs(price) or 1.0))) + 1))
 
     for i in range(n_minutes):
         if regime_left <= 0:
@@ -80,8 +83,9 @@ def generate(n_minutes: int = 60 * 24 * 30, start: int = 1_704_067_200_000,
         low = min(low, open_, close)
         vol = base_vol * season * (1.0 + abs(step) / (volatility * price + 1e-9)) \
             * rng.uniform(0.6, 1.5)
-        out.append(Candle(ts, ts + MS_MINUTE, round(open_, 1), round(high, 1),
-                          round(low, 1), round(close, 1), round(vol, 2)))
+        out.append(Candle(ts, ts + MS_MINUTE, round(open_, digits),
+                          round(high, digits), round(low, digits),
+                          round(close, digits), round(vol, 2)))
         price = close
         ts += MS_MINUTE
     return out

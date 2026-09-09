@@ -345,6 +345,23 @@ class Backtester:
 
         # R reached so far, measured on closed bars only.
         r = pos.mfe
+        if mode == "STEPS":
+            for step in risk.trailing_steps:
+                trigger, action = float(step[0]), str(step[1])
+                offset = float(step[2]) if len(step) > 2 else 0.0
+                if r < trigger:
+                    continue
+                if action == "TRAIL":
+                    self._trail(pos, swing_tf=risk.trailing_swing_timeframe,
+                                buffer_atr=risk.trailing_buffer_atr)
+                elif action == "STOP_AT_R":
+                    new_stop = round_tick(
+                        pos.entry + offset * pos.risk_per_unit * pos.side.sign,
+                        self.cfg.execution.tick_size)
+                    if self._improves(pos, new_stop):
+                        pos.stop = new_stop
+                        pos.be_moved = offset >= 0.0
+            return
         if mode == "A":
             be_at, trail_at = 0.25, 0.50
         elif mode == "B":

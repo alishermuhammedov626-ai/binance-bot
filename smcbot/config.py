@@ -198,7 +198,14 @@ class RiskConfig:
     #   B: +0.50R BE, +0.75R swing trail
     #   C: +0.75R swing trail, no early breakeven
     #   D: swing trail from the start, every new higher low / lower high
-    trailing_mode: str = "LEGACY"          # LEGACY | A | B | C | D
+    trailing_mode: str = "LEGACY"    # LEGACY | A | B | C | D | STEPS
+    # STEPS is the general form: a list of [trigger_R, action, offset_R] rules,
+    # applied in order once max favourable excursion reaches trigger_R.
+    #   STOP_AT_R -> move the stop to entry + offset_R * risk
+    #                (offset 0 = breakeven, -0.1 = a tenth of R still at risk)
+    #   TRAIL     -> trail behind the last confirmed swing
+    # Every rule only ever moves the stop in the position's favour.
+    trailing_steps: list = field(default_factory=list)
     trailing_buffer_atr: float = 0.10
     trailing_swing_timeframe: str = "M1"
     # Take the configured share at the final target and let the rest ride the
