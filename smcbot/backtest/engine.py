@@ -370,7 +370,11 @@ class Backtester:
             tp_hits=list(pos.tp_hits), exit_reason=reason,
             model_version=f"{self.cfg.smc_engine_version}|{self.cfg.ml.model_version}",
             fills=list(pos.fills),
-            meta={k: v for k, v in setup.meta.items() if k != "evidence"},
+            # The score breakdown rides along purely as a record: it is written
+            # to the journal so a component-level audit is possible, and is
+            # never read back by any decision.
+            meta={**{k: v for k, v in setup.meta.items() if k != "evidence"},
+                  "score_breakdown": dict(setup.score_breakdown)},
         )
         self.risk.on_trade_closed(net, ts)
         trade.equity_after = round(self.risk.equity, 6)
