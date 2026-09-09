@@ -72,14 +72,57 @@ def _split(candles: List[Candle], ratio: float) -> tuple:
 
 # ---------------------------------------------------------------- commands
 def cmd_fetch(args) -> int:
+    """Download M1 candles, streaming to disk so a long job can be resumed."""
     import datetime as dt
-    start = args.start or (dt.datetime.now(dt.timezone.utc) -
-                           dt.timedelta(days=args.days)).strftime("%Y-%m-%d")
-    print(f"[fetch] {args.symbol} 1m from {start} -> {args.out}")
-    candles = loader.fetch_binance(args.symbol, "1m", start, args.end)
-    n = loader.save_csv(args.out, candles)
-    print(f"[fetch] saved {n} candles ({len(loader.gaps(candles))} gaps)")
+
+    out = args.out
+    start = args.start
+    if args.resume:
+        last = loader.last_candle_time(out)
+        if last is not None:
+            start = str(last + 60_000)
+            print(f"[fetch] resuming {out} from {_fmt(last)}")
+    if start is None:
+        start = (dt.datetime.now(dt.timezone.utc) -
+                 dt.timedelta(days=args.days)).strftime("%Y-%m-%d")
+    if not args.resume and os.path.exists(out):
+        os.remove(out)
+
+    print(f"[fetch] {args.symbol} {args.interval} from {start} -> {out}")
+    written = [0]
+
+    def sink(batch):
+        written[0] += loader.append_csv(out, batch)
+
+    def show(total, last_open):
+        print(f"      {total:>8d} candles, at {_fmt(last_open)}", flush=True)
+
+    try:
+        loader.fetch_binance(args.symbol, args.interval, start, args.end,
+                             limit_total=args.max_candles,
+                             sleep_between=args.sleep,
+                             progress=show, on_batch=sink)
+    except KeyboardInterrupt:
+        print(f"\n[fetch] interrupted -- {written[0]} candles saved; "
+              f"rerun with --resume to continue")
+        return 1
+    except Exception as exc:
+        print(f"[fetch] FAILED after {written[0]} candles: {exc}")
+        print("        rerun with --resume to continue from where it stopped")
+        return 1
+
+    candles = loader.load_csv(out)
+    holes = loader.gaps(candles)
+    print(f"[fetch] {len(candles)} candles saved, {len(holes)} gaps")
+    if holes:
+        print(f"        first gap: {_fmt(holes[0][0])} -> {_fmt(holes[0][1])}")
     return 0
+
+
+def _fmt(ms: int) -> str:
+    import datetime as dt
+    return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).strftime(
+        "%Y-%m-%d %H:%M")
 
 
 def cmd_backtest(args) -> int:
@@ -315,10 +358,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("fetch", help="download Binance M1 klines")
     sp.add_argument("--symbol", default="BTCUSDT")
+    sp.add_argument("--interval", default="1m")
     sp.add_argument("--days", type=int, default=365)
     sp.add_argument("--start")
     sp.add_argument("--end")
     sp.add_argument("--out", default="data/candles.csv")
+    sp.add_argument("--resume", action="store_true",
+                    help="continue an interrupted download instead of restarting")
+    sp.add_argument("--sleep", type=float, default=0.25,
+                    help="seconds between requests (rate-limit pacing)")
+    sp.add_argument("--max-candles", type=int, default=2_000_000)
     sp.set_defaults(func=cmd_fetch)
 
     sp = sub.add_parser("backtest", help="run the backtest")

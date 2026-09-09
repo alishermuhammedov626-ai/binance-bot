@@ -1,0 +1,30 @@
+# Weekly unattended backtest. Install:
+#   sudo cp deploy/smcbot-backtest.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now smcbot-backtest.timer
+#   journalctl -u smcbot-backtest -f          # watch a run
+#
+# Type=oneshot: this is a job that finishes, not a daemon. The pipeline exits 2
+# when the production checks fail, which is a normal result rather than a
+# crash, so it is listed as success to keep the timer from flapping.
+[Unit]
+Description=SMC bot backtest pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=smcbot
+WorkingDirectory=/opt/smcbot
+ExecStart=/opt/smcbot/scripts/server_backtest.sh BTCUSDT 365
+SuccessExitStatus=0 2
+TimeoutStartSec=4h
+Nice=10
+# A backtest needs nothing but its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/smcbot/data /opt/smcbot/runs
+
+[Install]
+WantedBy=multi-user.target

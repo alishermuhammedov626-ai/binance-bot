@@ -39,7 +39,7 @@ Other commands: `dataset`, `walkforward`, `train`, `montecarlo`, `dashboard`,
 ### Single-file build
 
 ```bash
-python scripts/build_pyz.py                 # -> dist/smcbot.pyz
+python scripts/build_dist.py                # -> dist/smcbot.pyz + tar.gz + sample CSV
 python dist/smcbot.pyz backtest --csv data/btc.csv
 ```
 
@@ -112,6 +112,96 @@ A signal formed on the close of bar *t* can never fill before bar *t+1*.
 Labels are the one legitimate use of future data (section 49): after the replay
 is finished, `ml/dataset.py` walks forward to see whether TP or SL came first.
 Features are built live during the replay and never touch it.
+
+---
+
+## Running on a server
+
+```bash
+git clone <repo> /opt/smcbot && cd /opt/smcbot
+./scripts/server_backtest.sh BTCUSDT 365
+```
+
+That single command downloads the candles (resumably), runs the full pipeline
+and writes everything into `runs/<symbol>-<timestamp>/`:
+
+| file | contents |
+|------|----------|
+| `log.txt` | the whole console output |
+| `metrics.json` | machine-readable results |
+| `smcbot.db` | SQLite journal — trades, signals, models, errors |
+| `config.json` | the exact config that run used |
+
+Exit code **0** means every production check passed, **2** means they did not
+(a normal result, not a crash), **1** means the run itself failed.
+
+### What it costs
+
+Measured on this codebase, single core:
+
+| workload | time | peak RAM |
+|----------|------|----------|
+| backtest, 120 days (173k bars) | 83 s | 131 MB |
+| backtest, 1 year (526k bars) | ~4 min | ~130 MB |
+| full `pipeline`, 1 year (4 passes + ML) | ~20–30 min | ~200 MB |
+| fetching 1 year of M1 | ~2–5 min | negligible |
+
+Memory is bounded by ring buffers, so it does **not** grow with history
+length — a 3-year run uses the same RAM as a 3-month one. **A 1 GB / 1 vCPU VPS
+is enough.** The work is pure CPU on one core; more cores only help if you run
+several symbols or configs in parallel.
+
+### Detached runs
+
+```bash
+nohup ./scripts/server_backtest.sh BTCUSDT 365 > /dev/null 2>&1 &
+tail -f runs/BTCUSDT-*/log.txt
+```
+
+### Scheduled runs (systemd)
+
+```bash
+sudo useradd -r -s /usr/sbin/nologin -d /opt/smcbot smcbot
+sudo chown -R smcbot:smcbot /opt/smcbot
+sudo cp deploy/smcbot-backtest.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now smcbot-backtest.timer
+journalctl -u smcbot-backtest -f
+```
+
+The unit runs as an unprivileged user with `ProtectSystem=strict` and write
+access to nothing but `data/` and `runs/`. A backtest needs no more than that.
+
+### Docker
+
+```bash
+docker compose -f deploy/docker-compose.yml build
+docker compose -f deploy/docker-compose.yml run --rm backtest \
+    pipeline --csv data/BTCUSDT_1m.csv
+```
+
+The image builds on `python:3.12-slim` with no pip install (there is nothing to
+install) and runs the engine tests during the build, so a broken build fails
+instead of shipping a container that starts but miscalculates.
+
+### Downloading a year of data
+
+`fetch` paces itself and survives interruptions, which matters unattended:
+a year of M1 is ~350 requests.
+
+```bash
+python -m smcbot fetch --symbol BTCUSDT --days 365 --out data/btc.csv --resume
+```
+
+It writes each batch to disk as it arrives, watches the exchange's
+`X-MBX-USED-WEIGHT-1M` header and pauses before the IP limit, retries 429/418
+and transport errors with exponential backoff (honouring `Retry-After`), and
+fails fast on a 4xx like a mistyped symbol instead of retrying a typo. If it
+dies anyway, `--resume` continues from the last candle on disk rather than
+starting over.
+
+Gaps are **reported, never interpolated** — inventing candles to fill an
+exchange outage would quietly corrupt the backtest.
 
 ---
 
@@ -263,9 +353,9 @@ walk-forward plus 2–4 weeks of paper trading, and then only at 0.1–0.25% ris
 python -m unittest discover -s tests -v
 ```
 
-125 tests: look-ahead (15, including the meta-test that plants a leak),
+135 tests: look-ahead (15, including the meta-test that plants a leak),
 engines (18), strategy, risk and backtest mechanics (40), ML (24),
-integration, runner and CLI (28).
+download hardening (10), integration, runner and CLI (28).
 
 ---
 

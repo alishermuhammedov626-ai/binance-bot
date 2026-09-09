@@ -1,0 +1,13 @@
+services:
+  backtest:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: smcbot:latest
+    volumes:
+      - ../data:/app/data
+      - ../runs:/app/runs
+    # Override at run time, e.g.
+    #   docker compose run --rm backtest pipeline --csv data/BTCUSDT_1m.csv
+    command: ["backtest", "--synthetic", "--days", "60"]
+    restart: "no"

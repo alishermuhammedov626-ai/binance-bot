@@ -1,10 +1,11 @@
-__pycache__/
+*.db
 *.py[cod]
+.DS_Store
 .venv/
-venv/
+__pycache__/
+data/
 data/*.csv
+dist/
 models/*.json
 runs/
-*.db
-.DS_Store
-dist/
+venv/
