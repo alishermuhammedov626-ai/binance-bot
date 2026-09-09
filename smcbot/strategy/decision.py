@@ -42,6 +42,9 @@ class RiskManager:
         self.day_start_equity = equity
         self.current_day: Optional[int] = None
         self.trades_today = 0
+        # session name -> trades opened in the current occurrence of it
+        self.trades_this_session: Dict[str, int] = {}
+        self.current_session: str = ""
         self.consecutive_losses = 0
         self.cooldown_until = 0
         self.trading_disabled_until_day: Optional[int] = None
@@ -62,6 +65,7 @@ class RiskManager:
             self.current_day = d
             self.day_start_equity = self.equity
             self.trades_today = 0
+            self.trades_this_session = {}
             if self.trading_disabled_until_day is not None and \
                     d > self.trading_disabled_until_day:
                 self.trading_disabled_until_day = None
@@ -92,6 +96,18 @@ class RiskManager:
         # Section 35 -- stop for the rest of the UTC day.
         if self.daily_drawdown >= risk.daily_loss_limit:
             self.trading_disabled_until_day = day_start(ts)
+
+    def note_session(self, session: str) -> None:
+        """Reset the per-session counter when a new session begins."""
+        if session != self.current_session:
+            self.current_session = session
+            self.trades_this_session[session] = 0
+
+    def session_trades(self, session: str) -> int:
+        return self.trades_this_session.get(session, 0)
+
+    def count_session_trade(self, session: str) -> None:
+        self.trades_this_session[session] = self.session_trades(session) + 1
 
     def reject(self, reason: str) -> None:
         self.rejections[reason] = self.rejections.get(reason, 0) + 1
@@ -158,6 +174,16 @@ class DecisionEngine:
         checks["trade_limit"] = rm.trades_today < cfg.risk.max_trades_per_day
         if not checks["trade_limit"]:
             return fail("max_trades_per_day")
+
+        # Section 37 as a per-session cap: an upper bound, never a quota.  A
+        # session with no valid setup simply trades zero.
+        session = ctx.session().value
+        rm.note_session(session)
+        if cfg.risk.max_trades_per_session > 0:
+            checks["session_limit"] = (rm.session_trades(session)
+                                       < cfg.risk.max_trades_per_session)
+            if not checks["session_limit"]:
+                return fail("max_trades_per_session")
 
         # -- market health (section 46) --------------------------------
         ok, why = self.market_ok(ctx)

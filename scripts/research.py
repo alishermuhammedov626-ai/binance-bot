@@ -112,20 +112,33 @@ def summarise(trades: Sequence[Trade], curve: Sequence[tuple]) -> dict:
         "fee": mean([fee_r(t) for t in trades]),
         "sl_pct": mean([100 * abs(t.entry_price - t.stop) / t.entry_price
                         for t in trades]),
+        "med_r": statistics.median(nets),
+        "tp_rate": sum(1 for t in trades if t.tp_hits) / len(trades),
+        "trail_rate": sum(1 for t in trades if t.exit_reason == "TRAILING") / len(trades),
+        "be_rate": sum(1 for t in trades if t.exit_reason == "BREAKEVEN") / len(trades),
+        "hold": mean([t.holding_minutes for t in trades]),
+        "per_day": len(trades) / max(
+            (max(t.entry_time for t in trades)
+             - min(t.entry_time for t in trades)) / 86_400_000, 1e-9),
     }
 
 
-ROW_HEAD = (f"{'variant':34s} {'n':>5s} {'win%':>6s} {'avgW':>6s} {'avgL':>6s} "
-            f"{'expR':>7s} {'PF':>6s} {'maxDD':>7s} {'fee/R':>6s} {'grossR':>7s}")
+ROW_HEAD = (f"{'variant':34s} {'n':>5s} {'t/day':>6s} {'win%':>6s} {'avgW':>6s} "
+            f"{'avgL':>6s} {'expR':>7s} {'medR':>6s} {'PF':>6s} {'maxDD':>7s} "
+            f"{'fee/R':>6s} {'grossR':>7s} {'TP%':>5s} {'trl%':>5s} {'BE%':>5s} "
+            f"{'hold':>5s}")
 
 
 def row(label: str, s: dict, extra: str = "") -> str:
     if not s.get("n"):
         return f"{label:34s} {'savdo yo^q':>5s}"
     p = " inf" if s["pf"] == float("inf") else f"{s['pf']:6.3f}"
-    return (f"{label:34s} {s['n']:5d} {s['win'] * 100:5.1f}% {s['avg_win']:6.2f} "
-            f"{s['avg_loss']:6.2f} {s['exp']:+7.3f} {p} {s['dd'] * 100:6.1f}% "
-            f"{s['fee']:6.3f} {s['gross_exp']:+7.3f}{extra}")
+    return (f"{label:34s} {s['n']:5d} {s['per_day']:6.2f} {s['win'] * 100:5.1f}% "
+            f"{s['avg_win']:6.2f} {s['avg_loss']:6.2f} {s['exp']:+7.3f} "
+            f"{s['med_r']:+6.2f} {p} {s['dd'] * 100:6.1f}% {s['fee']:6.3f} "
+            f"{s['gross_exp']:+7.3f} {s['tp_rate'] * 100:4.0f}% "
+            f"{s['trail_rate'] * 100:4.0f}% {s['be_rate'] * 100:4.0f}% "
+            f"{s['hold']:5.0f}{extra}")
 
 
 # ------------------------------------------------------------------ stats
@@ -282,6 +295,109 @@ def stage_filters(runner: Runner, inherited: dict) -> dict:
 STAGES = {"stop": stage_stop, "target": stage_target, "partials": stage_partials,
           "entry": stage_entry, "filters": stage_filters}
 
+# ---------------------------------------------------------- scalp stages
+def stage_scalp_tp(runner: Runner, inherited: dict) -> dict:
+    """Short fixed targets against ATR targets against the liquidity ladder."""
+    variants = [("tp=LIQUIDITY (baseline)", {"risk.tp_mode": "LIQUIDITY"})]
+    for pct in (0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80):
+        variants.append((f"tp={pct}% (single)",
+                         {"risk.tp_mode": "PERCENT",
+                          "risk.tp_percent_levels": [pct],
+                          "risk.partial_tp": {"tp1": 1.0, "tp2": .0, "tp3": .0}}))
+    for m in (0.50, 0.75, 1.00, 1.25, 1.50):
+        variants.append((f"tp=ATR x{m} (single)",
+                         {"risk.tp_mode": "ATR",
+                          "risk.tp_atr_multiples": [m],
+                          "risk.partial_tp": {"tp1": 1.0, "tp2": .0, "tp3": .0}}))
+    _, ov = pick_best(runner, "SCALP 1: TARGET MASOFASI", variants, inherited)
+    return ov
+
+
+def stage_scalp_stop(runner: Runner, inherited: dict) -> dict:
+    variants = []
+    for mode in ("M1_SWING", "M5_SWING", "SWEEP_EXTREME"):
+        for buf in (0.05, 0.10, 0.15, 0.20):
+            variants.append((f"SL={mode} buf={buf}",
+                             {"risk.stop_mode": mode, "risk.sl_atr_buffer": buf}))
+    _, ov = pick_best(runner, "SCALP 2: INITIAL STOP", variants, inherited)
+    return ov
+
+
+def stage_scalp_trailing(runner: Runner, inherited: dict) -> dict:
+    variants = [("trail=LEGACY", {"risk.trailing_mode": "LEGACY"}),
+                ("trail=off", {"risk.trailing_enabled": False})]
+    for mode in ("A", "B", "C", "D"):
+        for buf in (0.05, 0.10, 0.15, 0.20):
+            variants.append((f"trail={mode} buf={buf}",
+                             {"risk.trailing_enabled": True,
+                              "risk.trailing_mode": mode,
+                              "risk.trailing_buffer_atr": buf}))
+    _, ov = pick_best(runner, "SCALP 3: TRAILING LADDER + BUFFER",
+                      variants, inherited)
+    return ov
+
+
+def stage_scalp_partials(runner: Runner, inherited: dict) -> dict:
+    """B/C/D take a share at TP1 and let the remainder ride the trail."""
+    variants = [
+        ("A: 100% TP1", {"risk.partial_tp": {"tp1": 1.0, "tp2": .0, "tp3": .0},
+                         "risk.trail_remainder": False}),
+        ("B: 50% TP1 + 50% trail", {"risk.partial_tp": {"tp1": .5, "tp2": .0, "tp3": .0},
+                                    "risk.trail_remainder": True}),
+        ("C: 70% TP1 + 30% trail", {"risk.partial_tp": {"tp1": .7, "tp2": .0, "tp3": .0},
+                                    "risk.trail_remainder": True}),
+        ("D: 30% TP1 + 70% trail", {"risk.partial_tp": {"tp1": .3, "tp2": .0, "tp3": .0},
+                                    "risk.trail_remainder": True}),
+    ]
+    _, ov = pick_best(runner, "SCALP 4: PARTIAL TP / QOLDIQ", variants, inherited)
+    return ov
+
+
+def stage_scalp_gates(runner: Runner, inherited: dict) -> dict:
+    variants = [("gate: yo'q", {"filters.max_fee_r": 0.0, "risk.min_rr": 1.5})]
+    for f in (0.50, 0.75):
+        variants.append((f"fee/R <= {f}", {"filters.max_fee_r": f}))
+    for rr in (1.25, 1.50, 1.75, 2.00):
+        variants.append((f"min RR {rr}", {"risk.min_rr": rr}))
+    for c in (0.25, 0.35, 0.50, 0.75):
+        variants.append((f"chase <= {c} ATR", {"filters.max_chase_atr": c}))
+    _, ov = pick_best(runner, "SCALP 5: NO-TRADE FILTRLAR", variants, inherited)
+    return ov
+
+
+def stage_scalp_session(runner: Runner, inherited: dict) -> dict:
+    variants = [("session cap: yo'q", {"risk.max_trades_per_session": 0}),
+                ("max 1 trade/session", {"risk.max_trades_per_session": 1}),
+                ("max 2 trade/session", {"risk.max_trades_per_session": 2})]
+    _, ov = pick_best(runner, "SCALP 6: SESSION LIMITI", variants, inherited,
+                      min_trades=25)
+    return ov
+
+
+def stage_scalp_risk(runner: Runner, inherited: dict) -> dict:
+    """Leverage must change margin only; expectancy in R must not move."""
+    variants = []
+    for risk_pct in (0.0025, 0.0035, 0.0050):
+        for lev in (17.0, 20.0, 25.0):
+            variants.append((f"risk {risk_pct * 100:.2f}% lev {lev:.0f}x",
+                             {"risk.risk_per_trade": risk_pct,
+                              "risk.max_risk_per_trade": risk_pct,
+                              "risk.min_risk_per_trade": risk_pct,
+                              "risk.leverage": lev}))
+    _, ov = pick_best(runner, "SCALP 7: RISK % VA LEVERAGE", variants, inherited)
+    return ov
+
+
+SCALP_STAGES = {
+    "scalp_tp": stage_scalp_tp, "scalp_stop": stage_scalp_stop,
+    "scalp_trailing": stage_scalp_trailing, "scalp_partials": stage_scalp_partials,
+    "scalp_gates": stage_scalp_gates, "scalp_session": stage_scalp_session,
+    "scalp_risk": stage_scalp_risk,
+}
+SCALP_ORDER = ["scalp_stop", "scalp_tp", "scalp_trailing", "scalp_partials",
+               "scalp_gates", "scalp_session", "scalp_risk"]
+
+
 
 # ------------------------------------------------------------------ main
 def main() -> int:
@@ -292,7 +408,10 @@ def main() -> int:
     ap.add_argument("--split", type=float, default=0.6,
                     help="share of the series used for selection")
     ap.add_argument("--stage", default="all",
-                    help="all | stop | target | partials | entry | filters | final")
+                    help="all | final | one stage name")
+    ap.add_argument("--preset", default="default", choices=["default", "scalp"],
+                    help="scalp = short fixed targets, trailing ladders, "
+                         "session cap")
     ap.add_argument("--config", help="inherited overrides from earlier stages (JSON)")
     ap.add_argument("--out", default="research_state.json")
     args = ap.parse_args()
@@ -359,14 +478,16 @@ def main() -> int:
     print("-" * 110)
     print(row("baseline", runner.evaluate({})))
 
-    order = (["stop", "target", "partials", "entry", "filters"]
-             if args.stage == "all" else [args.stage])
+    table = {**STAGES, **SCALP_STAGES}
+    default_order = SCALP_ORDER if args.preset == "scalp" else [
+        "stop", "target", "partials", "entry", "filters"]
+    order = default_order if args.stage == "all" else [args.stage]
     for name in order:
-        if name not in STAGES:
+        if name not in table:
             print(f"noma'lum bosqich: {name}")
             return 1
         t0 = time.time()
-        ov = STAGES[name](runner, inherited)
+        ov = table[name](runner, inherited)
         inherited = {**inherited, **ov}
         print(f"[{name}] {time.time() - t0:.0f}s; "
               f"jamlangan konfiguratsiya: {json.dumps(inherited, default=str)}")

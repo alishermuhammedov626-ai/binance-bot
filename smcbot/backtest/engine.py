@@ -64,6 +64,7 @@ class Position:
     mfe: float = 0.0
     mae: float = 0.0
     be_moved: bool = False
+    trailed: bool = False
     fills: List[Fill] = field(default_factory=list)
     last_funding: int = 0
     exit_request: str = ""
@@ -227,6 +228,7 @@ class Backtester:
         self.position = pos
         self.risk.open_positions += 1
         self.risk.trades_today += 1
+        self.risk.count_session_trade(self.ctx.session().value)
         self.signals.mark_traded(setup.setup_id)
 
     def _portions(self, n_targets: int) -> List[float]:
@@ -260,7 +262,8 @@ class Backtester:
             else (candle.high >= pos.stop)
         if stop_hit:
             price = self._slip(pos.stop, pos.side)
-            reason = "BREAKEVEN" if pos.be_moved else "STOP"
+            reason = ("BREAKEVEN" if pos.be_moved and not pos.trailed
+                      else "TRAILING" if pos.trailed else "STOP")
             self._close(pos, price, candle.close_time, reason, maker=False)
             return
 
@@ -275,10 +278,12 @@ class Backtester:
             if pos.qty <= 0:
                 return
 
-        # 4. Trailing (section 31), only once profit is locked in.
-        if self.cfg.risk.trailing_enabled and \
-                len(pos.tp_hits) >= self.cfg.risk.trailing_after_tp:
-            self._trail(pos)
+        # 4. Trailing (section 31).  Applied at the end of the bar, so a stop
+        # raised on this bar can only be hit from the next one -- moving it up
+        # on this bar's high and then testing this bar's low would assume an
+        # intrabar order we cannot know.
+        if self.cfg.risk.trailing_enabled:
+            self._apply_trailing(pos)
 
         # 5. Strategy exit requested by the previous bar's analysis (section 95).
         if pos.exit_request:
@@ -288,7 +293,12 @@ class Backtester:
     def _take_profit(self, pos: Position, index: int, price: float, ts: int) -> None:
         portion = pos.portions[index] if index < len(pos.portions) else 0.0
         qty = round_step(pos.initial_qty * portion, self.cfg.execution.qty_step)
-        if index == len(pos.targets) - 1 or qty > pos.qty:
+        last = index == len(pos.targets) - 1
+        if last and self.cfg.risk.trail_remainder and portion < 1.0:
+            # Take the configured share and let the rest ride the trailing stop
+            # instead of closing the position at the final target.
+            qty = min(qty, pos.qty)
+        elif last or qty > pos.qty:
             qty = pos.qty
         if qty <= 0:
             pos.tp_hits.append(index)
@@ -313,20 +323,64 @@ class Backtester:
                 pos.stop = round_tick(new_stop, self.cfg.execution.tick_size)
                 pos.be_moved = True
 
-    def _trail(self, pos: Position) -> None:
-        """Trail behind the last *confirmed* swing of the configured timeframe."""
-        tf = self.cfg.risk.trailing_timeframe
+    def _apply_trailing(self, pos: Position) -> None:
+        """Route to the configured trailing ladder."""
+        risk = self.cfg.risk
+        mode = risk.trailing_mode
+        if mode == "LEGACY":
+            if len(pos.tp_hits) >= risk.trailing_after_tp:
+                self._trail(pos)
+            return
+
+        # R reached so far, measured on closed bars only.
+        r = pos.mfe
+        if mode == "A":
+            be_at, trail_at = 0.25, 0.50
+        elif mode == "B":
+            be_at, trail_at = 0.50, 0.75
+        elif mode == "C":
+            be_at, trail_at = None, 0.75
+        elif mode == "D":
+            be_at, trail_at = None, 0.0
+        else:
+            return
+
+        if be_at is not None and r >= be_at and not pos.be_moved:
+            offset = risk.be_offset_r * pos.risk_per_unit * pos.side.sign
+            new_stop = round_tick(pos.entry + offset, self.cfg.execution.tick_size)
+            if self._improves(pos, new_stop):
+                pos.stop = new_stop
+                pos.be_moved = True
+        if r >= trail_at:
+            self._trail(pos, swing_tf=risk.trailing_swing_timeframe,
+                        buffer_atr=risk.trailing_buffer_atr)
+
+    @staticmethod
+    def _improves(pos: Position, new_stop: float) -> bool:
+        """A stop may only ever move in the position's favour."""
+        return (new_stop > pos.stop) if pos.side is Side.BUY else (new_stop < pos.stop)
+
+    def _trail(self, pos: Position, swing_tf: Optional[str] = None,
+               buffer_atr: Optional[float] = None) -> None:
+        """Trail behind the last *confirmed* swing of the chosen timeframe.
+
+        The swing engine has not yet seen the current bar when this runs, so the
+        anchor is a pivot that was already public -- no look-ahead.
+        """
+        tf = swing_tf or self.cfg.risk.trailing_timeframe
         eng = self.ctx.views[tf].structure.internal_swings
         anchor = eng.last_low() if pos.side is Side.BUY else eng.last_high()
         if anchor is None:
             return
-        buffer_ = self.cfg.risk.sl_atr_buffer * (self.ctx.atr(tf) or 0.0)
-        new_stop = anchor.price - buffer_ if pos.side is Side.BUY else anchor.price + buffer_
+        mult = (buffer_atr if buffer_atr is not None
+                else self.cfg.risk.sl_atr_buffer)
+        buffer_ = mult * (self.ctx.atr(tf) or 0.0)
+        new_stop = (anchor.price - buffer_ if pos.side is Side.BUY
+                    else anchor.price + buffer_)
         new_stop = round_tick(new_stop, self.cfg.execution.tick_size)
-        if pos.side is Side.BUY and new_stop > pos.stop:
+        if self._improves(pos, new_stop):
             pos.stop = new_stop
-        elif pos.side is Side.SELL and new_stop < pos.stop:
-            pos.stop = new_stop
+            pos.trailed = True
 
     def _apply_funding(self, pos: Position, candle: Candle) -> None:
         """Charge funding at each 8-hour boundary the position spans."""
@@ -368,6 +422,7 @@ class Backtester:
             pnl=net, fees=round(pos.fees, 6), funding=round(pos.funding, 6),
             mfe=round(pos.mfe, 4), mae=round(pos.mae, 4), r_multiple=round(r_mult, 4),
             tp_hits=list(pos.tp_hits), exit_reason=reason,
+            holding_minutes=round((ts - pos.opened_at) / 60_000, 1),
             model_version=f"{self.cfg.smc_engine_version}|{self.cfg.ml.model_version}",
             fills=list(pos.fills),
             # The score breakdown rides along purely as a record: it is written

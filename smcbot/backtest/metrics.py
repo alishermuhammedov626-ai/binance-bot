@@ -8,6 +8,7 @@ drawdown.
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, field
 from typing import Dict, List
 
@@ -98,9 +99,23 @@ def compute_metrics(trades: List[Trade], curve: List[tuple],
     cagr = ((1 + total_return) ** (365 / span_days) - 1) if span_days > 30 else 0.0
     calmar = (cagr / dd) if dd > 0 else 0.0
 
+    exits: Dict[str, int] = {}
+    for t in trades:
+        exits[t.exit_reason or "UNKNOWN"] = exits.get(t.exit_reason or "UNKNOWN", 0) + 1
+    holding = [t.holding_minutes for t in trades if t.holding_minutes]
+    tp_hit = sum(1 for t in trades if t.tp_hits)
+
     return {
         "trades": n,
         "wins": len(wins),
+        "median_r": round(statistics.median(r_multiples), 4) if r_multiples else 0.0,
+        "tp_hit_rate": round(tp_hit / n, 4),
+        "trailing_exit_rate": round(exits.get("TRAILING", 0) / n, 4),
+        "be_exit_rate": round(exits.get("BREAKEVEN", 0) / n, 4),
+        "stop_exit_rate": round(exits.get("STOP", 0) / n, 4),
+        "avg_holding_min": round(_mean(holding), 1) if holding else 0.0,
+        "median_holding_min": round(statistics.median(holding), 1) if holding else 0.0,
+        "exit_mix": exits,
         "losses": len(losses),
         "win_rate": round(p_win, 4),
         "loss_rate": round(p_loss, 4),

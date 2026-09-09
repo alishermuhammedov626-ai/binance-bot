@@ -341,6 +341,7 @@ class Trade:
     r_multiple: float = 0.0
     tp_hits: list = field(default_factory=list)
     exit_reason: str = ""
+    holding_minutes: float = 0.0
     model_version: str = ""
     equity_after: float = 0.0
     fills: list = field(default_factory=list)

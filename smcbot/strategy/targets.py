@@ -77,6 +77,28 @@ def atr_targets(side: Side, entry: float, stop: float, atr: float,
     return out
 
 
+def percent_targets(side: Side, entry: float, stop: float,
+                    cfg: RiskConfig) -> List[Target]:
+    """Targets a fixed percentage of the *underlying price* away.
+
+    Deliberately not scaled by leverage: leverage changes the margin a position
+    needs, never the distance price must travel to reach a target.
+    """
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return []
+    out: List[Target] = []
+    for pct in cfg.tp_percent_levels:
+        distance = entry * pct / 100.0
+        price = entry + distance * side.sign
+        level = LiquidityLevel(price, LiquidityKind.INTERNAL, side is Side.BUY,
+                               "PCT", 5.0, 0, 0, f"{pct}%")
+        out.append(Target(price=price, liquidity=level,
+                          rr=round(distance / risk, 3), distance=distance,
+                          probability=_probability(distance / max(risk, 1e-9), 5.0)))
+    return out
+
+
 def select_targets(side: Side, entry: float, stop: float, atr: float,
                    liq: LiquidityEngine, cfg: RiskConfig) -> tuple:
     """Return ``(targets, final_rr, reason)`` honouring the minimum-RR rule.
@@ -85,9 +107,12 @@ def select_targets(side: Side, entry: float, stop: float, atr: float,
     not the RR of the furthest target, so a 1.2R first target cannot be dressed
     up by a distant TP3 the trade will rarely reach.
     """
-    targets = (atr_targets(side, entry, stop, atr, cfg)
-               if cfg.tp_mode == "ATR"
-               else build_targets(side, entry, stop, atr, liq, cfg))
+    if cfg.tp_mode == "ATR":
+        targets = atr_targets(side, entry, stop, atr, cfg)
+    elif cfg.tp_mode == "PERCENT":
+        targets = percent_targets(side, entry, stop, cfg)
+    else:
+        targets = build_targets(side, entry, stop, atr, liq, cfg)
     if not targets:
         return [], 0.0, "no_liquidity_target"
 

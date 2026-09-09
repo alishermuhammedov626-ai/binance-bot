@@ -156,11 +156,19 @@ class RiskConfig:
     cooldown_minutes: int = 12             # section 38
     cooldown_after_loss_minutes: int = 25
     max_trades_per_day: int = 5            # section 37
+    # At most this many trades in one session (0 = no session cap).  The cap is
+    # an upper bound, never a quota: a session with no valid setup trades zero.
+    max_trades_per_session: int = 0
     soft_trades_per_day: int = 4
     # LIQUIDITY is the shipped behaviour (section 27).  ATR places targets at
     # fixed ATR multiples instead, so the two can be compared head to head.
-    tp_mode: str = "LIQUIDITY"             # LIQUIDITY | ATR
+    # LIQUIDITY is the shipped behaviour.  ATR and PERCENT place targets at a
+    # fixed distance instead, so the three can be compared head to head.
+    # PERCENT is measured on the underlying price, never multiplied by
+    # leverage -- leverage changes margin, not where price has to travel.
+    tp_mode: str = "LIQUIDITY"             # LIQUIDITY | ATR | PERCENT
     tp_atr_multiples: list = field(default_factory=lambda: [1.0, 2.0, 3.0])
+    tp_percent_levels: list = field(default_factory=lambda: [0.4, 0.7, 1.0])
     partial_tp: Dict[str, float] = field(
         default_factory=lambda: {"tp1": 0.30, "tp2": 0.30, "tp3": 0.40}   # section 30
     )
@@ -169,6 +177,19 @@ class RiskConfig:
     trailing_enabled: bool = True          # section 31
     trailing_after_tp: int = 1
     trailing_timeframe: str = "M5"
+    # LEGACY is the shipped behaviour (trail after the first partial).  A-D are
+    # R-triggered ladders; the stop only ever moves in the favourable
+    # direction, and every trigger is evaluated on closed bars.
+    #   A: +0.25R BE, +0.50R swing trail
+    #   B: +0.50R BE, +0.75R swing trail
+    #   C: +0.75R swing trail, no early breakeven
+    #   D: swing trail from the start, every new higher low / lower high
+    trailing_mode: str = "LEGACY"          # LEGACY | A | B | C | D
+    trailing_buffer_atr: float = 0.10
+    trailing_swing_timeframe: str = "M1"
+    # Take the configured share at the final target and let the rest ride the
+    # trailing stop, instead of closing the position there.
+    trail_remainder: bool = False
     early_exit_on_invalidation: bool = True  # section 95
 
 
