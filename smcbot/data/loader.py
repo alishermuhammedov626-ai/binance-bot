@@ -118,6 +118,8 @@ def _request(url: str, timeout: int) -> tuple:
                 detail = exc.read().decode()[:200]
             except Exception:
                 pass
+            finally:
+                exc.close()      # release the body; a long fetch must not leak fds
             raise RequestRejected(f"HTTP {exc.code} from the exchange: "
                                   f"{detail or exc.reason}") from exc
         raise

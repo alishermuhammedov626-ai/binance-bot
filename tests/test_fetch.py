@@ -7,6 +7,7 @@ layer (the exchange is not contacted) and pin the recovery behaviour.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
@@ -48,8 +49,16 @@ class FakeResponse:
 
 
 def http_error(code, retry_after=None):
+    """Build an HTTPError with a real body.
+
+    Passing ``fp=None`` makes urllib allocate a TemporaryFile that nothing ever
+    closes, which surfaces as a ResourceWarning on Python 3.13+.  An explicit
+    BytesIO keeps the tests quiet and still lets the code under test read the
+    error body.
+    """
     headers = {"Retry-After": str(retry_after)} if retry_after else {}
-    return urllib.error.HTTPError("u", code, "err", headers, None)
+    body = io.BytesIO(b'{"code":-1121,"msg":"Invalid symbol."}')
+    return urllib.error.HTTPError("u", code, "err", headers, body)
 
 
 class TestFetchRetries(unittest.TestCase):
