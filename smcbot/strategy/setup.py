@@ -306,7 +306,19 @@ class SignalEngine:
             expires_at=now + self.cfg.setup.m1_ttl_bars * MINUTE,
             reasons=list(c.history),
         )
+        atr15 = ctx.atr("M15") or 1e-9
         setup.meta = {
+            # Recording only -- how stale the sweep was by the time the entry
+            # formed, and how far price had travelled away from its extreme.
+            # Nothing reads these back; they exist so the sweep can be audited.
+            "sweep_age_min": round((now - c.sweep.time) / MINUTE, 1),
+            "sweep_distance_atr": round(
+                abs(entry - c.sweep.extreme_price) / atr15, 3),
+            "sweep_penetration_atr": c.sweep.penetration_atr,
+            "sweep_wick_ratio": c.sweep.wick_ratio,
+            "sweep_return_bars": c.sweep.return_speed,
+            "sweep_volume_ratio": c.sweep.volume_ratio,
+            "sweep_level_kind": c.sweep.level.kind.value,
             "kind": c.kind,
             "classification": classify(final, self.cfg.score),
             "stop_source": stop_plan.source,
