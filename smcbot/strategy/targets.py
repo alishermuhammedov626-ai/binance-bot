@@ -126,6 +126,6 @@ def select_targets(side: Side, entry: float, stop: float, atr: float,
     if best_rr < cfg.min_rr:
         return used, round(weighted_rr, 3), "rr_below_minimum"
     # Section 79: the *first* target must itself be worth taking.
-    if used[0].rr < 0.8 and len(used) == 1:
+    if used[0].rr < cfg.min_first_target_rr and len(used) == 1:
         return used, round(weighted_rr, 3), "target_too_close"
     return used, round(weighted_rr, 3), "ok"

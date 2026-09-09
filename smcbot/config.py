@@ -138,6 +138,10 @@ class RiskConfig:
     max_risk_per_trade: float = 0.005
     max_open_positions: int = 1            # section 93
     min_rr: float = 1.5                    # section 29
+    # A single target closer than this (in R) is refused as not worth the
+    # round trip.  Configurable because a short-scalp model deliberately runs
+    # a first target below 1R and would otherwise be blocked invisibly.
+    min_first_target_rr: float = 0.8
     preferred_rr: float = 2.0
     strong_rr: float = 2.5
     # Where the stop comes from.  M1_SWING is the shipped behaviour; the other
@@ -228,6 +232,9 @@ class SessionConfig:
     asia: tuple = (0, 8)
     london: tuple = (7, 16)
     new_york: tuple = (12, 21)
+    # Disabled by default: (0, 0) means the block is empty, so nothing changes
+    # unless a strategy explicitly wants a fourth session slot.
+    late: tuple = (0, 0)
 
 
 @dataclass

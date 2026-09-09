@@ -57,6 +57,7 @@ class Session(str, Enum):
     ASIA = "ASIA"
     LONDON = "LONDON"
     NEW_YORK = "NEW_YORK"
+    LATE = "LATE"          # fourth block, so a day can hold four session slots
     OFF = "OFF"
 
 

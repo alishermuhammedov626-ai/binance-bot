@@ -177,7 +177,10 @@ class SessionTracker:
             (Session.ASIA, self.cfg.asia),
             (Session.LONDON, self.cfg.london),
             (Session.NEW_YORK, self.cfg.new_york),
+            (Session.LATE, self.cfg.late),
         ):
+            if a == b:
+                continue                    # empty block
             inside = a <= hour < b if a < b else (hour >= a or hour < b)
             if inside:
                 out.append(name)
@@ -186,7 +189,8 @@ class SessionTracker:
     def primary_session(self, ts: int) -> Session:
         act = self.session_of(ts)
         # Overlaps resolve to the later-opening (more dominant) session.
-        for pref in (Session.NEW_YORK, Session.LONDON, Session.ASIA):
+        for pref in (Session.LATE, Session.NEW_YORK, Session.LONDON,
+                     Session.ASIA):
             if pref in act:
                 return pref
         return Session.OFF
