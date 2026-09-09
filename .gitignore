@@ -7,3 +7,4 @@ models/*.json
 runs/
 *.db
 .DS_Store
+dist/

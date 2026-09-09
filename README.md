@@ -36,6 +36,28 @@ Other commands: `dataset`, `walkforward`, `train`, `montecarlo`, `dashboard`,
 `config`. Any command takes `--set key.path=value` overrides, e.g.
 `--set risk.min_rr=2.0 ml.threshold=0.6`.
 
+### Single-file build
+
+```bash
+python scripts/build_pyz.py                 # -> dist/smcbot.pyz
+python dist/smcbot.pyz backtest --csv data/btc.csv
+```
+
+`zipapp` archives the real package rather than concatenating sources, so the
+bundle is exactly the code the test suite runs.
+
+### CSV format
+
+`open_time,open,high,low,close,volume` — M1 candles, `open_time` in
+milliseconds (or ISO-8601). A header row is optional. Input is sorted,
+de-duplicated and checked for impossible OHLC before use, and gaps are
+reported rather than silently interpolated.
+
+```
+open_time,open,high,low,close,volume
+1704067200000,42000.0,42007.1,41993.2,42000.2,50.37
+```
+
 ---
 
 ## Proof it cannot see the future
