@@ -226,6 +226,11 @@ class FilterConfig:
     # Reject a setup whose estimated round-trip commission exceeds this share
     # of its own risk.  0 disables it, which is the shipped behaviour.
     max_fee_r: float = 0.0
+    # Two gates that were hard-coded. Section 33 asks that every filter be
+    # judged KEEP / REMOVE / SOFT on evidence, which is impossible while a
+    # filter cannot be switched off.
+    require_m1_confirmation: bool = True
+    allow_counter_trend_minor: bool = False
     news_filter: bool = False              # section 66 -- OFF unless a feed exists
     min_bars_ready: Dict[str, int] = field(
         default_factory=lambda: {"M15": 120, "M5": 240, "M1": 300}

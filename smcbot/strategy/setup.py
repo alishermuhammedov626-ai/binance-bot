@@ -150,6 +150,8 @@ class SignalEngine:
                                       LiquidityKind.EQUAL_LOW)
         if major:
             return "REVERSAL"       # section 42/85 -- countertrend needs a major grab
+        if self.cfg.filters.allow_counter_trend_minor:
+            return "REVERSAL"
         self.reject("counter_trend_minor_liquidity")
         return None
 
@@ -252,8 +254,11 @@ class SignalEngine:
         m1_sweep = m1.sweeps.best_recent(c.retested_at - 10 * MINUTE,
                                          is_high=not c.bullish)
         m1_shift = m1.structure.recent_shift(c.bullish, now, TF_MS["M1"])
-        if m1_shift is None or m1_shift.time < c.retested_at - 10 * MINUTE:
-            return None
+        stale = m1_shift is None or m1_shift.time < c.retested_at - 10 * MINUTE
+        if stale:
+            if self.cfg.filters.require_m1_confirmation:
+                return None
+            self.reject("m1_confirmation_missing_but_allowed")
         c.m1_sweep = m1_sweep
         c.m1_shift = m1_shift
         c.to(SetupState.M1_CONFIRMATION, now)
