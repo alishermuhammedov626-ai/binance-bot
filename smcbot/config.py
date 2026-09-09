@@ -142,7 +142,14 @@ class RiskConfig:
     strong_rr: float = 2.5
     # Where the stop comes from.  M1_SWING is the shipped behaviour; the other
     # two exist so the choice can be measured rather than assumed.
-    stop_mode: str = "M1_SWING"            # M1_SWING | M5_SWING | SWEEP_EXTREME
+    stop_mode: str = "M1_SWING"     # M1_SWING | M5_SWING | SWEEP_EXTREME | ATR_CLAMPED
+    # ATR_CLAMPED: distance = ATR(period) * multiplier, then clamped into
+    # [sl_min_pct, sl_max_pct] of price.  Measured from the *fill* price, not
+    # the signal price, so slippage cannot silently change the risk.
+    sl_atr_period_timeframe: str = "M5"
+    sl_atr_multiplier: float = 1.5
+    sl_min_pct: float = 0.30
+    sl_max_pct: float = 0.50
     sl_atr_buffer: float = 0.25            # section 25
     sl_tick_buffer: float = 2.0            # in ticks
     min_sl_atr: float = 0.35               # too-tight M1 stop => fall back to M5
@@ -159,6 +166,9 @@ class RiskConfig:
     # At most this many trades in one session (0 = no session cap).  The cap is
     # an upper bound, never a quota: a session with no valid setup trades zero.
     max_trades_per_session: int = 0
+    # Only trade inside these sessions (empty = any).  Hours that belong to no
+    # named session are then simply not traded.
+    allowed_sessions: list = field(default_factory=list)
     soft_trades_per_day: int = 4
     # LIQUIDITY is the shipped behaviour (section 27).  ATR places targets at
     # fixed ATR multiples instead, so the two can be compared head to head.

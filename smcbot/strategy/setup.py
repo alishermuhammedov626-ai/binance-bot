@@ -282,7 +282,8 @@ class SignalEngine:
         m5_anchor = self._confirmation_swing(ctx, c, "M5")
         stop_plan = build_stop(c.side, entry, m1_anchor, m5_anchor, atr1, atr5,
                                self.cfg.risk, self.cfg.execution,
-                               sweep_extreme=c.sweep.extreme_price)
+                               sweep_extreme=c.sweep.extreme_price,
+                               atr_ref=ctx.atr(self.cfg.risk.sl_atr_period_timeframe))
         if not stop_plan.valid:
             self.reject(f"stop:{stop_plan.reason or 'invalid'}")
             return None

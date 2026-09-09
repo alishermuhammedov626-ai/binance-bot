@@ -192,6 +192,17 @@ class Backtester:
         cfg = self.cfg
         setup = order.setup
         side = setup.side
+        # ATR_CLAMPED sizes the stop from the price actually filled, not the
+        # price the signal quoted, so slippage cannot quietly change the risk.
+        # The ATR used is the one published before this bar -- still causal.
+        if cfg.risk.stop_mode == "ATR_CLAMPED":
+            from ..strategy.risk import atr_clamped_stop
+            replan = atr_clamped_stop(
+                side, price, self.ctx.atr(cfg.risk.sl_atr_period_timeframe),
+                cfg.risk, cfg.execution)
+            if replan.valid:
+                setup.stop = replan.price
+                setup.meta["stop_source"] = replan.source
         # Re-derive risk from the *actual* fill so a slipped entry does not
         # silently take more risk than configured.
         risk_per_unit = abs(price - setup.stop)

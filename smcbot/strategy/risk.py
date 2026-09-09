@@ -55,10 +55,37 @@ def round_tick(price: float, tick: float, direction: int = 0) -> float:
     return round(units * tick, 10)
 
 
+def atr_clamped_stop(side: Side, price: float, atr: float, cfg: RiskConfig,
+                     execution: ExecutionConfig) -> StopPlan:
+    """ATR-sized stop, clamped to a percentage band around ``price``.
+
+    Two independent paths compute the distance -- the ATR path and the
+    percentage bounds -- and the result is the ATR distance forced inside the
+    bounds.  The chosen path is recorded in ``source`` so a run can be audited
+    for which one actually bound.
+    """
+    raw = cfg.sl_atr_multiplier * max(atr, 0.0)
+    lo = price * cfg.sl_min_pct / 100.0
+    hi = price * cfg.sl_max_pct / 100.0
+    if raw < lo:
+        distance, path = lo, "ATR_CLAMPED_MIN"
+    elif raw > hi:
+        distance, path = hi, "ATR_CLAMPED_MAX"
+    else:
+        distance, path = raw, "ATR_CLAMPED_ATR"
+    stop = price - distance * side.sign
+    stop = round_tick(stop, execution.tick_size, -side.sign)
+    actual = abs(price - stop)
+    plan = StopPlan(stop, path, actual,
+                    actual / atr if atr > 0 else 0.0, True)
+    return _finalise(plan, side, price, cfg)
+
+
 def build_stop(side: Side, entry: float, m1_swing: Optional[float],
                m5_swing: Optional[float], atr_m1: float, atr_m5: float,
                cfg: RiskConfig, execution: ExecutionConfig,
-               sweep_extreme: Optional[float] = None) -> StopPlan:
+               sweep_extreme: Optional[float] = None,
+               atr_ref: float = 0.0) -> StopPlan:
     """Section 25 -- behind the confirmation swing, with an ATR/tick buffer.
 
     ``cfg.stop_mode`` selects which structure the stop hides behind.  All three
@@ -76,6 +103,8 @@ def build_stop(side: Side, entry: float, m1_swing: Optional[float],
                         dist / atr_m1 if atr_m1 else 0.0, True)
 
     mode = getattr(cfg, "stop_mode", "M1_SWING")
+    if mode == "ATR_CLAMPED":
+        return atr_clamped_stop(side, entry, atr_ref, cfg, execution)
     if mode == "M5_SWING" and m5_swing is not None:
         anchor = m5_swing
         plan = make(anchor, "M5_SWING")
@@ -111,7 +140,7 @@ def _finalise(plan: StopPlan, side: Side, entry: float,
     if (side is Side.BUY and plan.price >= entry) or \
        (side is Side.SELL and plan.price <= entry):
         return StopPlan(plan.price, plan.source, 0.0, 0.0, False, "stop_wrong_side")
-    if plan.distance_atr > cfg.max_sl_atr:
+    if plan.distance_atr > cfg.max_sl_atr and not plan.source.startswith("ATR_CLAMPED"):
         plan.valid = False
         plan.reason = "stop_too_wide"
     if plan.distance <= 0:

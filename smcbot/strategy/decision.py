@@ -179,6 +179,10 @@ class DecisionEngine:
         # session with no valid setup simply trades zero.
         session = ctx.session().value
         rm.note_session(session)
+        if cfg.risk.allowed_sessions:
+            checks["session_allowed"] = session in cfg.risk.allowed_sessions
+            if not checks["session_allowed"]:
+                return fail("outside_allowed_session")
         if cfg.risk.max_trades_per_session > 0:
             checks["session_limit"] = (rm.session_trades(session)
                                        < cfg.risk.max_trades_per_session)
